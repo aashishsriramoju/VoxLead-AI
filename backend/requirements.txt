@@ -1,0 +1,14 @@
+# requirements.txt – Python dependencies for VoxLead AI backend
+# Pin major versions to avoid breaking changes; minor updates are safe.
+
+fastapi==0.115.5          # Web framework; async support built-in
+uvicorn[standard]==0.32.1 # ASGI server to run FastAPI
+sqlalchemy==2.0.36        # ORM for SQLite
+pydantic==2.10.1          # Request/response validation (FastAPI uses this internally)
+python-dotenv==1.0.1      # Loads .env file into os.environ
+google-genai==1.14.0      # Official Google Gemini SDK (replaces google-generativeai)
+numpy==2.1.3              # Cosine similarity for RAG
+pypdf==5.1.0              # Read PDF files in the knowledge base
+pytest==8.3.4             # Test runner for the 3 lead-scoring tests
+pytest-asyncio==0.24.0    # Async test support
+httpx>=0.25.0             # Async HTTP client used by FastAPI test client (version flexible)
