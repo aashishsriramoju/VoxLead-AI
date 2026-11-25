@@ -8,6 +8,7 @@
 # - Automatic call termination and post-call summary generation when the customer says goodbye
 
 import json
+import time
 import logging
 from datetime import datetime
 from typing import Optional
@@ -110,6 +111,7 @@ class AgentService:
         language: str,
         db: Session,
     ) -> Optional[TurnResponse]:
+        turn_start_time = time.perf_counter()
 
         call = db.query(Call).filter(Call.id == call_id).first()
         if not call:
@@ -240,6 +242,8 @@ class AgentService:
             for c in chunks
         ]
 
+        latency_ms = round((time.perf_counter() - turn_start_time) * 1000, 1)
+
         return TurnResponse(
             reply=reply_text,
             sentiment=sentiment,
@@ -248,6 +252,7 @@ class AgentService:
             appointment=appointment_out,
             sources=sources,
             call_ended=call_ended,
+            latency_ms=latency_ms,
         )
 
     def _build_context_block(self, chunks: list[dict]) -> str:

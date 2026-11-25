@@ -52,7 +52,14 @@ export default function ChatWindow({ messages, isProcessing }) {
                 <span className="sender-name">
                   {m.role === "assistant" ? "🤖 Nova (Sales Rep)" : "👤 Customer"}
                 </span>
-                {renderSentimentBadge(m.sentiment)}
+                <div className="meta-right">
+                  {m.latency && (
+                    <span className="message-latency" title="Roundtrip voice turnaround time">
+                      ⚡ {m.latency}ms
+                    </span>
+                  )}
+                  {renderSentimentBadge(m.sentiment)}
+                </div>
               </div>
 
               <div className="message-body">{m.text}</div>

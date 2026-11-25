@@ -64,6 +64,7 @@ class TurnResponse(BaseModel):
     appointment: Optional[AppointmentOut] = None
     sources: List[SourceChunk]    = []
     call_ended: bool              = False
+    latency_ms: Optional[float]   = None
 
 
 class EndCallResponse(BaseModel):

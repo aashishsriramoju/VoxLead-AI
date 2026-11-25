@@ -18,11 +18,13 @@ export default function App() {
   const [lastAgentReply, setLastAgentReply] = useState("");
   const [currentLanguage, setCurrentLanguage] = useState("en-IN");
   const [statusMessage, setStatusMessage] = useState("");
+  const [lastTurnLatency, setLastTurnLatency] = useState(null);
 
   // Start Call Handler
   const handleStartCall = async () => {
     setIsProcessing(true);
     setStatusMessage("Starting conversation with NovaCRM...");
+    setLastTurnLatency(null);
     try {
       const res = await api.startCall();
       setCallId(res.call_id);
@@ -48,7 +50,7 @@ export default function App() {
   };
 
   // Turn Handler
-  const handleSendTurn = async (userText) => {
+  const handleSendTurn = async (userText, clientTimestamp = null) => {
     if (!callId || !userText.trim()) return;
 
     // 1. Optimistically append user message to chat
@@ -64,6 +66,15 @@ export default function App() {
       // 2. Call backend /turn endpoint
       const turnResp = await api.sendTurn(callId, userText, currentLanguage);
 
+      // Measure turnaround latency between human voice ending and system answer
+      const roundtripMs = clientTimestamp ? Math.max(50, Date.now() - clientTimestamp) : null;
+      if (roundtripMs) {
+        setLastTurnLatency({
+          totalMs: roundtripMs,
+          backendMs: turnResp.latency_ms || null,
+        });
+      }
+
       // 3. Update agent response in chat
       setMessages((prev) => [
         ...prev,
@@ -72,6 +83,7 @@ export default function App() {
           text: turnResp.reply,
           sentiment: turnResp.sentiment,
           sources: turnResp.sources || [],
+          latency: roundtripMs,
         },
       ]);
 
@@ -180,6 +192,7 @@ export default function App() {
               lastAgentReply={lastAgentReply}
               currentLanguage={currentLanguage}
               onChangeLanguage={setCurrentLanguage}
+              lastTurnLatency={lastTurnLatency}
             />
 
             <div className="agent-panels">

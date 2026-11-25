@@ -777,3 +777,110 @@ body {
   border-top: 1px solid var(--border-color);
   margin-top: auto;
 }
+
+
+/* Advanced Voice State & Interruption Styling */
+.active-call-btns {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.btn-interrupt {
+  background-color: #f97316;
+  color: #fff;
+  animation: pulse-orange 1.5s infinite;
+}
+
+.btn-interrupt:hover {
+  background-color: #ea580c;
+}
+
+@keyframes pulse-orange {
+  0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.6); }
+  70% { box-shadow: 0 0 0 10px rgba(249, 115, 22, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+}
+
+.voice-meta-header {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.latency-badge {
+  background-color: rgba(56, 189, 248, 0.15);
+  border: 1px solid var(--accent-blue);
+  color: var(--accent-blue);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.latency-sub {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.voice-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 1rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.state-listening {
+  background-color: rgba(52, 211, 153, 0.2);
+  color: #34d399;
+  border: 1px solid #10b981;
+}
+
+.state-speaking {
+  background-color: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+  border: 1px solid #f59e0b;
+  animation: pulse-border 1.5s infinite;
+}
+
+.state-processing {
+  background-color: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border: 1px solid #0284c7;
+}
+
+.state-idle {
+  background-color: rgba(148, 163, 184, 0.2);
+  color: #94a3b8;
+  border: 1px solid #64748b;
+}
+
+.mic-button.mic-speaking-bargein {
+  border-color: #f97316;
+  background-color: rgba(249, 115, 22, 0.25);
+  animation: pulse-orange 1.2s infinite;
+  cursor: pointer;
+}
+
+.meta-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.message-latency {
+  background-color: rgba(56, 189, 248, 0.15);
+  color: var(--accent-blue);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
