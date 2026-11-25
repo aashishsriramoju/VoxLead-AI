@@ -1,25 +1,41 @@
 # VoxLead AI 🎙️
 
-**Autonomous AI sales voice agent** — talks to customers by voice, answers questions from company docs, qualifies leads, books demos, and summarises calls.
+**Autonomous AI Sales Voice Agent** — talks to customers by voice, answers questions strictly from company documents, qualifies leads deterministically, schedules demos into live calendar slots, and generates post-call CRM summaries.
 
-Built for a technical interview MVP in 6 hours using **Python + FastAPI + Gemini + React**.
+Built as a technical interview MVP with **Python + FastAPI + Google Gemini + React (Vite)**.
 
 ---
 
-## Quick Start
+## ⚡ Quick Start
 
-### Backend
+### 1. Backend Setup
 
 ```bash
 cd backend
 python -m pip install -r requirements.txt
-cp ../.env.example .env          # fill in your GEMINI_API_KEY
-uvicorn main:app --reload --port 8000
+cp ../.env.example .env
 ```
 
-Visit **http://localhost:8000/docs** for the interactive API (Swagger UI).
+Edit `.env` and set your `GEMINI_API_KEY`:
+```ini
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_FLASH_MODEL=gemini-2.0-flash
+GEMINI_EMBEDDING_MODEL=text-embedding-004
+DATABASE_URL=sqlite:///./voxlead.db
+RAG_SIMILARITY_THRESHOLD=0.60
+RAG_TOP_K=4
+```
 
-### Frontend
+Start the FastAPI backend:
+```bash
+python -m uvicorn main:app --reload --port 8000
+```
+- Interactive API Docs (Swagger): **http://localhost:8000/docs**
+- Health Check: **http://localhost:8000/health**
+
+---
+
+### 2. Frontend Setup
 
 ```bash
 cd frontend
@@ -27,75 +43,100 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173**
+Open **http://localhost:5173** in Google Chrome or Microsoft Edge (recommended for Web Speech API support).
 
-### Run tests
+---
 
+## 🧪 Running Automated Tests
+
+Run the deterministic lead-scoring unit test suite:
 ```bash
 cd backend
-pytest tests/ -v
+python -m pytest tests/test_lead_scoring.py -v
+```
+
+Run RAG cosine similarity and chunking tests:
+```bash
+cd backend
+python tests/test_rag.py
+```
+
+Run slot booking verification:
+```bash
+cd backend
+python tests/test_booking.py
 ```
 
 ---
 
-## Project Structure
+## 📁 Repository Structure
 
 ```
 VoxLead-AI/
 ├── backend/
-│   ├── main.py          # FastAPI app + startup
-│   ├── config.py        # All env vars in one place
-│   ├── database.py      # SQLAlchemy engine + session
-│   ├── models.py        # DB tables (Call, Message, Lead, Appointment, Slot)
-│   ├── schemas.py       # Pydantic request/response models
-│   ├── seed.py          # Seeds time slots on startup
-│   ├── api/             # Thin HTTP route handlers (no business logic)
-│   ├── services/        # All AI and business logic
-│   │   ├── llm_service.py    # Gemini client
-│   │   ├── agent_service.py  # Conversation orchestrator
-│   │   ├── rag_service.py    # Document loading + embedding + retrieval
-│   │   ├── lead_service.py   # Deterministic lead scoring
-│   │   ├── booking_service.py# Slot checking and booking
-│   │   └── summary_service.py# End-of-call summary
-│   ├── knowledge_base/  # Drop your .md, .txt, .pdf files here
-│   └── tests/           # 3 pytest tests for lead scoring
-├── frontend/src/
-│   ├── App.jsx
-│   ├── components/
-│   │   ├── VoiceInterface.jsx   # Mic button, STT/TTS, language picker
-│   │   ├── ChatWindow.jsx       # Message bubbles with sentiment badges
-│   │   └── Dashboard.jsx        # Leads + Appointments + Call history
-│   └── services/api.js          # Axios wrappers for the backend
+│   ├── main.py                  # FastAPI application entry point & CORS
+│   ├── config.py                # Environment configurations (single source of truth)
+│   ├── database.py              # SQLAlchemy engine, session maker & Base
+│   ├── models.py                # ORM models (Call, Message, Lead, Appointment, Slot)
+│   ├── schemas.py               # Pydantic request & response validation schemas
+│   ├── seed.py                  # Automatic 5-day slot generator (10:00-17:00 UTC)
+│   ├── api/                     # Thin HTTP route handlers (No business logic)
+│   │   ├── call.py              # POST /start, POST /{id}/turn, POST /{id}/end
+│   │   ├── leads.py             # GET /api/leads
+│   │   ├── appointments.py      # GET /api/appointments, GET /api/appointments/slots
+│   │   ├── calls_history.py     # GET /api/calls
+│   │   └── kb.py                # POST /api/kb/reload
+│   ├── services/                # All AI and Business Logic
+│   │   ├── llm_service.py       # Official google-genai client wrapper
+│   │   ├── agent_service.py     # Multi-turn conversation orchestrator & memory
+│   │   ├── rag_service.py       # Custom RAG (pypdf, heading chunker, SHA-256 cache, numpy cosine)
+│   │   ├── lead_service.py      # Deterministic 100-pt rule-based lead qualification
+│   │   ├── booking_service.py   # Calendar slot validation & appointment confirmation
+│   │   └── summary_service.py   # Post-call transcript analysis & CRM summary
+│   ├── knowledge_base/          # Drop company docs (.md, .txt, .pdf) here
+│   └── tests/                   # Pytest unit tests
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx              # Main shell with view switcher (Voice Agent & Dashboard)
+│   │   ├── App.css              # Custom responsive stylesheet (zero external UI libraries)
+│   │   ├── components/
+│   │   │   ├── VoiceInterface.jsx  # Web Speech STT/TTS & audio loop prevention
+│   │   │   ├── ChatWindow.jsx      # Message log with sentiment badges & RAG citations
+│   │   │   ├── Sidebar.jsx         # Live lead card, progress bar & appointment confirmation
+│   │   │   └── Dashboard.jsx       # Tabbed CRM analytics for leads, appts, and calls
+│   │   └── services/
+│   │       └── api.js           # Native fetch REST client
 ├── docs/
-│   ├── architecture.md   # Mermaid diagram + design decisions
-│   └── project-report.md # Problem, implementation, scalability, security
-└── .env.example
+│   ├── architecture.md          # Full architectural design document with Mermaid diagram
+│   └── project-report.md        # Technical, commercial, scalability & security report
+├── .env.example
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## Knowledge Base
+## 📚 Knowledge Base (RAG) Usage
 
-Drop any `.md`, `.txt`, or `.pdf` files into `backend/knowledge_base/` and call:
-
+1. Place your company documents (`.md`, `.txt`, or `.pdf`) inside `backend/knowledge_base/` (e.g. `services_pricing.md`, `refund_policy.md`, `terms_of_service.md`).
+2. Trigger the reload endpoint to index and embed them:
+```bash
+curl -X POST http://localhost:8000/api/kb/reload
 ```
-POST /api/kb/reload
-```
-
-The agent will answer questions **only** from these documents.
+3. VoxLead AI will now answer questions **strictly** from these documents, citing the exact document and section under every response.
 
 ---
 
-## Environment Variables
+## 🔗 Linking to GitHub (Public Repository)
 
-| Variable | Description |
-|---|---|
-| `GEMINI_API_KEY` | Your Google AI Studio key |
-| `GEMINI_FLASH_MODEL` | Default: `gemini-2.0-flash` |
-| `GEMINI_EMBEDDING_MODEL` | Default: `text-embedding-004` |
-| `RAG_SIMILARITY_THRESHOLD` | Min cosine similarity to use a chunk (default: 0.60) |
-| `RAG_TOP_K` | Number of chunks to retrieve (default: 4) |
+To push this project to your GitHub account:
 
----
+1. Create a new public repository on GitHub named `VoxLead-AI` at [github.com/new](https://github.com/new).
+2. Run the following commands in your terminal:
 
-*Built by Aashish – VoxLead AI MVP, 2024*
+```bash
+cd C:\Users\AASHISH\Documents\SEM7\VoxLead-AI
+git remote add origin https://github.com/YOUR_GITHUB_USERNAME/VoxLead-AI.git
+git branch -M main
+git push -u origin main
+```
