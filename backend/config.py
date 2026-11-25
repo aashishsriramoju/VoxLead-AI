@@ -9,11 +9,11 @@ load_dotenv()  # reads .env file from the project root
 # --- Gemini ---
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
-# Flash model on the free tier (confirmed available as of 2025)
-GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.0-flash")
+# Flash model on the free tier (current active model)
+GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
 
 # Text-embedding model available on the free tier
-GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 
 # --- Database ---
 DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./voxlead.db")
