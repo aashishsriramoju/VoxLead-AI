@@ -85,7 +85,16 @@ export default function App() {
       if (turnResp.appointment) {
         setAppointment(turnResp.appointment);
       }
-      setStatusMessage("Call active");
+
+      // 6. Handle automatic call ending
+      if (turnResp.call_ended) {
+        setStatusMessage("Call ended automatically. Post-call summary saved!");
+        setTimeout(() => {
+          setCallActive(false);
+        }, 4000);
+      } else {
+        setStatusMessage("Call active");
+      }
     } catch (err) {
       console.error("Turn failed:", err);
       const fallbackText =

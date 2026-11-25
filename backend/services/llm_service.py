@@ -67,18 +67,34 @@ async def generate(
             )
         )
 
-        response = gemini_client.models.generate_content(
-            model=GEMINI_FLASH_MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=temperature,
-                # Force JSON output so we can parse it reliably
-                response_mime_type="application/json",
-            ),
-        )
+        # Try primary model, cascade to alternates on rate-limit/demand spikes
+        candidate_models = [GEMINI_FLASH_MODEL, "gemini-3.5-flash-lite", "gemini-3.5-flash"]
+        # Remove duplicates while preserving order
+        unique_models = list(dict.fromkeys(candidate_models))
 
-        return response.text
+        for model_name in unique_models:
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=temperature,
+                        # Force JSON output so we can parse it reliably
+                        response_mime_type="application/json",
+                    ),
+                )
+                return response.text
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "503" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    logger.warning(f"Model {model_name} rate-limited/busy, cascading to next model...")
+                    continue
+                else:
+                    logger.error(f"Gemini generate error with {model_name}: {e}")
+                    return None
+
+        return None
 
     except Exception as exc:
         logger.error(f"Gemini generate error: {exc}")
@@ -95,19 +111,33 @@ async def generate_plain(
     Used by summary_service for the end-of-call summary.
     """
     try:
-        response = gemini_client.models.generate_content(
-            model=GEMINI_FLASH_MODEL,
-            contents=[
-                types.Content(role="user", parts=[types.Part(text=user_message)])
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=temperature,
-            ),
-        )
-        return response.text
+        candidate_models = [GEMINI_FLASH_MODEL, "gemini-3.5-flash-lite", "gemini-3.5-flash"]
+        unique_models = list(dict.fromkeys(candidate_models))
+
+        for model_name in unique_models:
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=[
+                        types.Content(role="user", parts=[types.Part(text=user_message)])
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=temperature,
+                    ),
+                )
+                return response.text
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "503" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    logger.warning(f"Plain model {model_name} rate-limited, cascading...")
+                    continue
+                else:
+                    logger.error(f"Gemini plain generate error with {model_name}: {e}")
+                    return None
+        return None
     except Exception as exc:
-        logger.error(f"Gemini plain generate error: {exc}")
+        logger.error(f"Gemini plain generate outer error: {exc}")
         return None
 
 

@@ -9,8 +9,8 @@ load_dotenv()  # reads .env file from the project root
 # --- Gemini ---
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
-# Flash model on the free tier (current active model)
-GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
+# Flash model on the free tier (current active model with healthy quota)
+GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash-lite")
 
 # Text-embedding model available on the free tier
 GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")

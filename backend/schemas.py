@@ -63,6 +63,7 @@ class TurnResponse(BaseModel):
     score: float                   = 0.0
     appointment: Optional[AppointmentOut] = None
     sources: List[SourceChunk]    = []
+    call_ended: bool              = False
 
 
 class EndCallResponse(BaseModel):

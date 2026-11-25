@@ -115,7 +115,7 @@ export default function Dashboard() {
                         <span className="text-muted">{l.phone || "No phone"}</span>
                       </td>
                       <td>{l.company || "—"}</td>
-                      <td>{l.budget ? `$${l.budget}/mo` : "—"}</td>
+                      <td>{l.budget ? `₹${Number(l.budget).toLocaleString('en-IN')}/mo` : "—"}</td>
                       <td>{l.team_size ? `${l.team_size} users` : "—"}</td>
                       <td>{l.timeline_days ? `${l.timeline_days} days` : "—"}</td>
                       <td>
@@ -157,7 +157,16 @@ export default function Dashboard() {
                       <td>#{a.id}</td>
                       <td>Lead #{a.lead_id}</td>
                       <td>
-                        <strong>{new Date(a.slot_start).toUTCString()}</strong>
+                        <strong>
+                          {new Date(a.slot_start).toLocaleString('en-IN', {
+                            weekday: 'long',
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true
+                          })}
+                        </strong>
                       </td>
                       <td>
                         <span className="status-pill pill-confirmed">

@@ -1,14 +1,11 @@
-# services/agent_service.py – Conversation orchestrator
+# services/agent_service.py – Conversation orchestrator with friendly persona, INR pricing, and auto-end call
 #
-# This is the brain of VoxLead AI. It runs one full "turn":
-#   1. Load message history from DB (memory)
-#   2. Retrieve relevant FAQ chunks (RAG – called here, implemented in Phase 3)
-#   3. Build the prompt and call Gemini
-#   4. Parse + validate Gemini's JSON response (with retry + fallback)
-#   5. Update the lead record with any new qualification fields
-#   6. If Gemini requested a slot action, call booking_service
-#   7. Store both messages (user + assistant) in DB
-#   8. Return the final TurnResponse to the API layer
+# Key features:
+# - Exceptionally warm, friendly, conversational sales persona
+# - Quotes and qualification in Indian Rupees (₹ / INR)
+# - Natural spoken times (no "UTC", no markdown bullet lists)
+# - Intelligent slot booking with natural language matching
+# - Automatic call termination and post-call summary generation when the customer says goodbye
 
 import json
 import logging
@@ -29,76 +26,73 @@ from services.lead_service import lead_service
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# System prompt – the agent's personality and strict rules
+# System prompt – Warm, friendly personality and Indian context (INR)
 # ---------------------------------------------------------------------------
-SYSTEM_PROMPT = """You are Nova, a friendly and concise sales representative for NovaCRM,
-a CRM software platform for growing sales teams.
+SYSTEM_PROMPT = """You are Nova, an exceptionally warm, enthusiastic, and friendly sales representative for NovaCRM,
+an intuitive CRM platform designed to empower growing sales teams.
 
-STRICT RULES:
-1. Reply in max 2 SHORT sentences — replies will be spoken aloud.
-2. Answer product/pricing/policy questions ONLY from the <context> block below.
-   If the answer is not in <context>, say: "I'll have a colleague follow up on that."
-3. Ask ONE qualification question at a time: team size → budget → timeline → requirements.
-4. Collect the customer's NAME and PHONE before attempting to book a demo.
-5. NEVER invent prices, features, discounts, or legal commitments.
-6. Reply in the SAME LANGUAGE the customer uses (English, Hindi, or Telugu).
-7. When answering from a document, mention the source: "According to our [document name]..."
+CORE CONVERSATIONAL GUIDELINES:
+1. TONE: Be delightfully warm, polite, and encouraging! Address the customer by name once you know it.
+2. SPOKEN REPLIES: Reply in max 2 SHORT, natural, conversational sentences. Avoid bullet points, symbols, or asterisks.
+3. CURRENCY: All pricing, budgets, and quotes MUST be in Indian Rupees (₹ / INR). Never quote in dollars.
+4. SPOKEN TIMES: Never say "UTC" or technical timezones. Speak dates naturally, e.g., "Thursday at 12 PM".
+5. KNOWLEDGE BOUNDARY: Answer product, pricing, and policy questions ONLY from the <context> block.
+   If the answer is not in <context>, warmly say: "I'll have our specialist follow up with you on that!"
+6. QUALIFICATION: Ask ONE gentle question at a time: team size → monthly budget (in ₹) → timeline → requirements.
+7. BOOKING PREREQUISITES: Collect the customer's name and phone number before booking a demo.
+8. AUTO-EXIT: If the customer indicates they are done, want to leave, or say goodbye (e.g. "bye", "that's all", "thank you bye"),
+   set action to "end_call" and give a cheerful, heartfelt farewell.
+9. LANGUAGE: Reply in the same language the customer uses (English, Hindi, or Telugu).
 
-OUTPUT FORMAT — you MUST return ONLY valid JSON, nothing else:
+OUTPUT FORMAT — you MUST return ONLY valid JSON:
 {
-  "reply": "<your spoken reply, max 2 sentences>",
+  "reply": "<warm spoken reply, max 2 short sentences>",
   "sentiment": "<positive|neutral|negative>",
   "lead_fields": {
     "name": "<string or null>",
     "phone": "<string or null>",
     "company": "<string or null>",
-    "budget": <number in USD/month or null>,
+    "budget": <number in INR / Rupees per month or null>,
     "team_size": <integer or null>,
     "requirements": "<string or null>",
     "timeline_days": <integer or null>
   },
-  "action": "<none|check_slots|book_appointment>",
-  "requested_slot": "<ISO datetime string or null>",
-  "language": "<BCP-47 code, e.g. en-IN>"
+  "action": "<none|check_slots|book_appointment|end_call>",
+  "requested_slot": "<natural time string or ISO string, or null>",
+  "language": "<en-IN|hi-IN|te-IN>"
 }
-
-Set lead_fields values to null if the customer did not mention them in this turn.
-Set action to "check_slots" when the customer asks about availability.
-Set action to "book_appointment" only when you have name, phone, AND a confirmed slot.
 """
 
-# Safe fallback reply when Gemini fails or returns unparseable JSON
 FALLBACK_REPLY = (
-    "I'm sorry, I didn't catch that. Could you please repeat? "
-    "I want to make sure I help you correctly."
+    "I'm so sorry, I didn't quite catch that. Could you please share that with me again? "
+    "I'd love to help you!"
 )
 
-# Greeting for the very first message of a call
 GREETING = (
-    "Hi! I'm Nova, your NovaCRM assistant. "
-    "I'd love to show you how NovaCRM can supercharge your sales team. "
-    "Could I start with your name?"
+    "Hi there! I'm Nova, your friendly NovaCRM assistant. "
+    "It's wonderful to connect with you! May I know your name?"
 )
+
+# Heuristic list of phrases indicating the customer wants to end the call
+EXIT_PHRASES = [
+    "bye", "goodbye", "bye bye", "see ya", "end call", "cut the call",
+    "hang up", "disconnect", "that's all", "that is all", "that's it",
+    "that is it", "all done", "no that's all", "nothing else", "no more questions",
+    "thanks bye", "thank you bye", "have a good day", "have a nice day",
+    "i am done", "that will be all",
+]
 
 
 class AgentService:
 
-    # -----------------------------------------------------------------------
-    # start_call
-    # -----------------------------------------------------------------------
     async def start_call(self, db: Session) -> CallStartResponse:
-        """
-        Create a Call row, a blank Lead row, and store the opening greeting.
-        Returns call_id so the frontend can reference this session.
-        """
         call = Call(language="en-IN")
         db.add(call)
-        db.flush()  # flush to get call.id without committing
+        db.flush()
 
         lead = Lead(call_id=call.id)
         db.add(lead)
 
-        # Store the greeting as the first assistant message
         db.add(Message(
             call_id=call.id,
             role="assistant",
@@ -109,9 +103,6 @@ class AgentService:
         db.refresh(call)
         return CallStartResponse(call_id=call.id, reply=GREETING)
 
-    # -----------------------------------------------------------------------
-    # handle_turn – main entry point for each conversation step
-    # -----------------------------------------------------------------------
     async def handle_turn(
         self,
         call_id: int,
@@ -120,16 +111,18 @@ class AgentService:
         db: Session,
     ) -> Optional[TurnResponse]:
 
-        # 1. Load the call; return None → 404 in the router
         call = db.query(Call).filter(Call.id == call_id).first()
         if not call:
             return None
 
-        # Update the detected language on the call record
         call.language = language
         db.add(call)
 
-        # 2. Load full message history for this call (this IS the memory)
+        # 1. Check for customer exit intent
+        user_lower = user_text.lower().strip()
+        user_wants_to_exit = any(phrase in user_lower for phrase in EXIT_PHRASES)
+
+        # 2. Load conversation history
         history_rows = (
             db.query(Message)
             .filter(Message.call_id == call_id)
@@ -138,30 +131,27 @@ class AgentService:
         )
         history = [{"role": m.role, "text": m.text} for m in history_rows]
 
-        # 3. Retrieve relevant knowledge-base chunks (Phase 3; stub returns [])
+        # 3. Retrieve RAG chunks
         from services.rag_service import rag_service
         chunks = await rag_service.retrieve(user_text)
-
-        # Build the <context> block injected into the system prompt
         context_block = self._build_context_block(chunks)
         full_system_prompt = SYSTEM_PROMPT + "\n\n" + context_block
 
-        # 4. Call Gemini; get raw JSON string
+        # 4. Generate LLM response
         raw = await llm_service.generate(
             system_prompt=full_system_prompt,
             history=history,
             user_message=user_text,
         )
 
-        # 5. Parse + validate with Pydantic; retry once on failure
         llm_resp = await self._parse_llm_response(raw, full_system_prompt, history, user_text)
 
-        reply_text   = llm_resp.reply
-        sentiment    = llm_resp.sentiment
-        action       = llm_resp.action
-        lead_fields  = llm_resp.lead_fields
+        reply_text  = llm_resp.reply
+        sentiment   = llm_resp.sentiment
+        action      = llm_resp.action
+        lead_fields = llm_resp.lead_fields
 
-        # 6. Update lead record with any newly extracted fields
+        # 5. Update Lead record
         lead = db.query(Lead).filter(Lead.call_id == call_id).first()
         if not lead:
             lead = Lead(call_id=call_id)
@@ -171,8 +161,8 @@ class AgentService:
         if lead_fields:
             self._merge_lead_fields(lead, lead_fields)
 
-        # Track unanswered questions if user asked something but no KB chunks were found
-        is_question = any(kw in user_text.lower() for kw in ["?", "what", "how", "pricing", "cost", "price", "refund", "policy", "sla", "terms", "can you", "do you", "support"])
+        # Track unanswered questions if relevant
+        is_question = any(kw in user_lower for kw in ["?", "what", "how", "pricing", "cost", "price", "refund", "policy", "sla", "terms", "can you", "do you", "support"])
         if is_question and not chunks:
             try:
                 curr_insights = json.loads(call.insights) if call.insights else {}
@@ -185,46 +175,66 @@ class AgentService:
             except Exception as e:
                 logger.error(f"Error recording unanswered question: {e}")
 
-        # 7. Recompute lead score (deterministic, in lead_service)
-        turn_count = len(history) + 1   # +1 for this turn
+        # 6. Recompute score
+        turn_count = len(history) + 1
         lead = lead_service.update_and_score(lead, {}, sentiment, turn_count, db)
 
-        # 8. Handle slot actions requested by the LLM
+        # 7. Handle Actions
         appointment_out: Optional[AppointmentOut] = None
+        call_ended = False
 
-        if action == "check_slots":
-            slots = booking_service.get_available_slots(db)
+        # AUTO-END CALL: If user wants to exit or LLM signaled end_call
+        if user_wants_to_exit or action == "end_call":
+            call_ended = True
+            customer_name = lead.name or "there"
+            reply_text = f"Thank you so much for chatting with me today, {customer_name}! Have a truly wonderful day ahead, goodbye!"
+            
+            # Finalize call in database
+            call.ended_at = datetime.utcnow()
+            db.commit()
+
+            # Trigger automated post-call summary
+            from services.summary_service import summary_service
+            summary_res = await summary_service.summarise(call_id, db)
+            call.summary = summary_res.get("summary")
+            call.insights = summary_res.get("insights")
+            call.overall_sentiment = summary_res.get("overall_sentiment")
+            db.commit()
+
+        elif action == "check_slots":
+            slots = booking_service.get_available_slots(db, limit=3)
             if slots:
-                slot_lines = "\n".join(
-                    s.slot_start.strftime("• %A %d %b at %I:%M %p UTC") for s in slots[:5]
-                )
-                reply_text = f"Here are some available demo slots:\n{slot_lines}\nWhich works for you?"
+                formatted_times = [booking_service.format_slot_friendly(s.slot_start) for s in slots]
+                if len(formatted_times) > 1:
+                    slots_spoken = ", ".join(formatted_times[:-1]) + f", or {formatted_times[-1]}"
+                else:
+                    slots_spoken = formatted_times[0]
+                reply_text = f"We have demo slots open {slots_spoken}! Which of those times works best for you?"
             else:
-                reply_text = "I'm sorry, there are no open slots right now. I'll have the team contact you."
+                reply_text = "I'm sorry, our upcoming slots are currently filled. Let me take down your details so our team can contact you directly!"
 
-        elif action == "book_appointment" and llm_resp.requested_slot:
-            appt = booking_service.book_slot(lead.id, llm_resp.requested_slot, db)
+        elif action == "book_appointment":
+            slot_query = llm_resp.requested_slot or user_text
+            appt = booking_service.book_slot(lead.id, slot_query, db, fallback_user_text=user_text)
             if appt:
                 appointment_out = AppointmentOut.model_validate(appt)
-                slot_str = appt.slot_start.strftime("%A %d %b at %I:%M %p UTC")
-                reply_text = f"Great! Your demo is booked for {slot_str}. We'll send a confirmation shortly."
+                friendly_time = booking_service.format_slot_friendly(appt.slot_start)
+                reply_text = f"Wonderful! Your demo is confirmed for {friendly_time}. We're excited to show you NovaCRM!"
             else:
-                reply_text = "That slot is no longer available. Let me show you other options."
-                # Cascade to show slots
-                slots = booking_service.get_available_slots(db)
+                slots = booking_service.get_available_slots(db, limit=3)
                 if slots:
-                    slot_lines = "\n".join(
-                        s.slot_start.strftime("• %A %d %b at %I:%M %p UTC") for s in slots[:5]
-                    )
-                    reply_text += f"\n{slot_lines}"
+                    formatted_times = [booking_service.format_slot_friendly(s.slot_start) for s in slots]
+                    slots_spoken = ", ".join(formatted_times[:-1]) + f", or {formatted_times[-1]}"
+                    reply_text = f"I couldn't quite catch which slot you preferred! We have slots open {slots_spoken}. Which one would you like?"
+                else:
+                    reply_text = "I couldn't book that slot right now, but our team will reach out to schedule your demo directly!"
 
-        # 9. Store both messages in DB
+        # 8. Store messages in DB
         db.add(Message(call_id=call_id, role="user",      text=user_text,   sentiment=sentiment))
         db.add(Message(call_id=call_id, role="assistant", text=reply_text,  sentiment="neutral"))
         db.commit()
         db.refresh(lead)
 
-        # Build source references for the UI (Phase 3 fills these)
         sources = [
             SourceChunk(file=c["file"], section=c["section"], score=round(c["score"], 3))
             for c in chunks
@@ -237,43 +247,10 @@ class AgentService:
             score=lead.score,
             appointment=appointment_out,
             sources=sources,
+            call_ended=call_ended,
         )
-
-    # -----------------------------------------------------------------------
-    # end_call
-    # -----------------------------------------------------------------------
-    async def end_call(self, call_id: int, db: Session) -> Optional[EndCallResponse]:
-        call = db.query(Call).filter(Call.id == call_id).first()
-        if not call:
-            return None
-
-        call.ended_at = datetime.utcnow()
-        db.commit()
-
-        # Delegate to summary_service (Phase 6 fills this in fully)
-        from services.summary_service import summary_service
-        result = await summary_service.summarise(call_id, db)
-
-        call.summary           = result["summary"]
-        call.insights          = result["insights"]
-        call.overall_sentiment = result["overall_sentiment"]
-        db.commit()
-
-        return EndCallResponse(
-            summary=result["summary"],
-            insights=result["insights"],
-            overall_sentiment=result["overall_sentiment"],
-        )
-
-    # -----------------------------------------------------------------------
-    # Private helpers
-    # -----------------------------------------------------------------------
 
     def _build_context_block(self, chunks: list[dict]) -> str:
-        """
-        Format retrieved RAG chunks into a <context> block.
-        The system prompt tells the LLM to answer only from this block.
-        """
         if not chunks:
             return "<context>\nNo relevant company documents found for this query.\n</context>"
 
@@ -281,7 +258,7 @@ class AgentService:
         for c in chunks:
             lines.append(f"[Source: {c['file']} > {c['section']}]")
             lines.append(c["text"])
-            lines.append("")  # blank line between chunks
+            lines.append("")
         lines.append("</context>")
         return "\n".join(lines)
 
@@ -292,23 +269,16 @@ class AgentService:
         history: list[dict],
         user_message: str,
     ) -> LLMResponse:
-        """
-        Try to parse Gemini's raw string as LLMResponse.
-        On failure: retry once with an explicit correction message.
-        On second failure: return a safe fallback so the call never crashes.
-        """
-        # Attempt 1: parse the raw output directly
         parsed = self._try_parse(raw)
         if parsed:
             return parsed
 
         logger.warning("Gemini returned invalid JSON on first attempt; retrying...")
 
-        # Attempt 2: re-call Gemini with an explicit nudge
         correction = (
             f"Your previous response was not valid JSON. "
-            f"The original user message was: '{user_message}'. "
-            f"Reply ONLY with the JSON object described in the system prompt. No markdown, no explanation."
+            f"The user message was: '{user_message}'. "
+            f"Reply ONLY with the valid JSON object described in the system prompt. No markdown."
         )
         raw2 = await llm_service.generate(
             system_prompt=system_prompt,
@@ -319,18 +289,13 @@ class AgentService:
         if parsed2:
             return parsed2
 
-        logger.error("Gemini failed twice; using fallback reply")
+        logger.error("Gemini failed twice; using friendly fallback reply")
         return LLMResponse(reply=FALLBACK_REPLY, sentiment="neutral")
 
     def _try_parse(self, raw: Optional[str]) -> Optional[LLMResponse]:
-        """
-        Parse and validate the JSON string.
-        Returns None on any parse or validation error.
-        """
         if not raw:
             return None
         try:
-            # Strip markdown code fences if the model wrapped the JSON
             text = raw.strip()
             if text.startswith("```"):
                 text = text.split("```")[1]
@@ -341,15 +306,10 @@ class AgentService:
             data = json.loads(text)
             return LLMResponse.model_validate(data)
         except Exception as exc:
-            logger.debug(f"JSON parse failed: {exc} | raw={raw[:200]}")
+            logger.debug(f"JSON parse failed: {exc}")
             return None
 
     def _merge_lead_fields(self, lead: Lead, fields: LeadFields):
-        """
-        Update lead only when the LLM returned a non-null value.
-        We never overwrite a known value with null — the LLM sees partial data
-        across turns and may not repeat fields it already collected.
-        """
         if fields.name         is not None: lead.name          = fields.name
         if fields.phone        is not None: lead.phone         = fields.phone
         if fields.company      is not None: lead.company       = fields.company
@@ -359,5 +319,4 @@ class AgentService:
         if fields.timeline_days is not None: lead.timeline_days = fields.timeline_days
 
 
-# Singleton – imported by the router
 agent_service = AgentService()

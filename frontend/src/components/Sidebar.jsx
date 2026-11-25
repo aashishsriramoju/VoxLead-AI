@@ -64,7 +64,7 @@ export default function Sidebar({ lead, appointment }) {
           </div>
           <div className="field-item">
             <label>Budget:</label>
-            <span>{lead?.budget ? `$${lead.budget}/mo` : "—"}</span>
+            <span>{lead?.budget ? `₹${Number(lead.budget).toLocaleString('en-IN')}/mo` : "—"}</span>
           </div>
           <div className="field-item">
             <label>Team Size:</label>
@@ -94,7 +94,14 @@ export default function Sidebar({ lead, appointment }) {
           </div>
           <p className="appointment-time">
             <strong>Time:</strong>{" "}
-            {new Date(appointment.slot_start).toUTCString()}
+            {new Date(appointment.slot_start).toLocaleString('en-IN', {
+              weekday: 'long',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            })}
           </p>
           <p className="appointment-note">
             Lead #{appointment.lead_id} • Calendar invite sent.
