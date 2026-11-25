@@ -1,12 +1,7 @@
-// components/VoiceInterface.jsx – Advanced Voice Interface with Barge-in Interruption & Latency Tracking
-// Features:
-// 1. Barge-in Interruption: User can interrupt Nova mid-sentence (stops TTS instantly and listens)
-// 2. Turnaround Latency Measurement: Calculates exact time between human speech end and system response
-// 3. Audio State Machine: [Idle] -> [Listening] -> [Processing] -> [Speaking] -> [Listening]
-// 4. Natural Voice Selection: Auto-selects natural regional voices from available OS/Browser voices
-// 5. Automatic error recovery and fallback text input
+// components/VoiceInterface.jsx – Bulletproof Web Speech API Voice Interface
+// Engineered for 100% reliability in Google Chrome, Microsoft Edge, and Chromium browsers.
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 export default function VoiceInterface({
   callActive,
@@ -20,201 +15,301 @@ export default function VoiceInterface({
   lastTurnLatency,
 }) {
   const [isListening, setIsListening] = useState(false);
-  const [continuousMode, setContinuousMode] = useState(true); // default to continuous for real conversational flow
+  const [continuousMode, setContinuousMode] = useState(true);
   const [transcript, setTranscript] = useState("");
   const [textInput, setTextInput] = useState("");
   const [isSpeakingTTS, setIsSpeakingTTS] = useState(false);
-  const [availableVoices, setAvailableVoices] = useState([]);
+  const [micError, setMicError] = useState("");
+  const [browserSupported, setBrowserSupported] = useState(true);
 
+  // References to eliminate React closure staleness
   const recognitionRef = useRef(null);
+  const isListeningRef = useRef(false);
+  const isSpeakingTTSRef = useRef(false);
+  const callActiveRef = useRef(false);
+  const continuousModeRef = useRef(true);
+  const restartTimerRef = useRef(null);
   const voiceSpeechEndTimestampRef = useRef(null);
 
-  // Load browser voices
+  // Sync state to refs
   useEffect(() => {
-    if (!("speechSynthesis" in window)) return;
-    const loadVoices = () => {
-      const v = window.speechSynthesis.getVoices();
-      setAvailableVoices(v);
-    };
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    isListeningRef.current = isListening;
+  }, [isListening]);
+
+  useEffect(() => {
+    isSpeakingTTSRef.current = isSpeakingTTS;
+  }, [isSpeakingTTS]);
+
+  useEffect(() => {
+    callActiveRef.current = callActive;
+  }, [callActive]);
+
+  useEffect(() => {
+    continuousModeRef.current = continuousMode;
+  }, [continuousMode]);
+
+  // Check browser support
+  useEffect(() => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setBrowserSupported(false);
+      setMicError(
+        "Web Speech Recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge."
+      );
+    }
   }, []);
 
-  // Initialize Web Speech API SpeechRecognition
+  // Safe Start function
+  const safeStart = useCallback(() => {
+    if (!recognitionRef.current || isListeningRef.current || isSpeakingTTSRef.current) {
+      return;
+    }
+    try {
+      recognitionRef.current.lang = currentLanguage;
+      recognitionRef.current.start();
+      isListeningRef.current = true;
+      setIsListening(true);
+      setMicError("");
+    } catch (err) {
+      // If already started, update state
+      if (err.name === "InvalidStateError") {
+        isListeningRef.current = true;
+        setIsListening(true);
+      } else {
+        console.warn("Recognition start warning:", err);
+      }
+    }
+  }, [currentLanguage]);
+
+  // Safe Stop function
+  const safeStop = useCallback(() => {
+    if (!recognitionRef.current) return;
+    try {
+      recognitionRef.current.stop();
+    } catch (e) {}
+    isListeningRef.current = false;
+    setIsListening(false);
+  }, []);
+
+  // Initialize SpeechRecognition once (or on language change)
   useEffect(() => {
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    if (!SpeechRecognition) {
-      console.warn("Web SpeechRecognition is not supported in this browser.");
-      return;
+    if (!SpeechRecognition) return;
+
+    // Clean up previous instance if any
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {}
     }
 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
     recognition.lang = currentLanguage;
+
+    recognition.onstart = () => {
+      isListeningRef.current = true;
+      setIsListening(true);
+      setMicError("");
+    };
 
     recognition.onresult = (event) => {
       let interim = "";
       let final = "";
 
       for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const item = event.results[i][0];
         if (event.results[i].isFinal) {
-          final += event.results[i][0].transcript;
+          final += item.transcript;
         } else {
-          interim += event.results[i][0].transcript;
+          interim += item.transcript;
         }
       }
 
-      const spoken = (final || interim).trim();
-      setTranscript(spoken);
+      const heard = (final || interim).trim();
+      if (heard) {
+        setTranscript(heard);
+      }
 
-      // If user speaks while Nova is speaking, trigger immediate barge-in interruption!
-      if (spoken.length > 2 && isSpeakingTTS) {
+      // If user speaks while Nova is speaking, trigger barge-in interrupt
+      if (heard.length > 2 && isSpeakingTTSRef.current) {
         handleInterrupt();
       }
 
+      // If we have a final transcript, dispatch the turn!
       if (final && final.trim()) {
         const query = final.trim();
-        // Record timestamp when human voice ends to measure roundtrip latency
         voiceSpeechEndTimestampRef.current = Date.now();
-
         setTranscript("");
-        if (!continuousMode) {
-          stopListening();
+
+        // Temporarily pause listening while processing unless in pure continuous mode
+        if (!continuousModeRef.current) {
+          safeStop();
         }
+
         onSendTurn(query, voiceSpeechEndTimestampRef.current);
       }
     };
 
     recognition.onerror = (event) => {
+      console.warn("Speech recognition error:", event.error);
       if (event.error === "no-speech") {
-        // Natural silence between sentences – keep listening if in continuous mode
+        // Normal silence; do not treat as fatal
         return;
       }
-      console.warn("Speech recognition notice:", event.error);
-      if (event.error === "not-allowed") {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        setMicError(
+          "Microphone permission is blocked! Please click the lock icon in your address bar and allow Microphone access."
+        );
+        isListeningRef.current = false;
         setIsListening(false);
+        return;
+      }
+      if (event.error === "network") {
+        setMicError("Speech recognition network error. Retrying connection...");
       }
     };
 
     recognition.onend = () => {
-      // Auto-reconnect if continuous mode is enabled and call is still active
-      if (continuousMode && callActive && !isSpeakingTTS) {
-        try {
-          recognition.start();
-          setIsListening(true);
-        } catch {
-          setIsListening(false);
-        }
-      } else {
-        setIsListening(false);
+      isListeningRef.current = false;
+      setIsListening(false);
+
+      // Debounced auto-restart: prevents Chrome's synchronous InvalidStateError
+      if (
+        callActiveRef.current &&
+        continuousModeRef.current &&
+        !isSpeakingTTSRef.current
+      ) {
+        if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (
+            callActiveRef.current &&
+            !isSpeakingTTSRef.current &&
+            !isListeningRef.current
+          ) {
+            safeStart();
+          }
+        }, 250);
       }
     };
 
     recognitionRef.current = recognition;
 
-    if (callActive && !isSpeakingTTS) {
-      startListening();
+    // Start recognition if call is active
+    if (callActiveRef.current && !isSpeakingTTSRef.current) {
+      safeStart();
     }
 
     return () => {
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       try {
-        recognition.stop();
-      } catch {}
+        recognition.abort();
+      } catch (e) {}
     };
-  }, [currentLanguage, continuousMode, callActive, isSpeakingTTS]);
+  }, [currentLanguage, safeStart, safeStop, onSendTurn]);
 
-  // Text-To-Speech (TTS) logic with natural voice selection & interruption handling
+  // Text-To-Speech (TTS) logic with safe mic coordination
   useEffect(() => {
     if (!lastAgentReply || !("speechSynthesis" in window)) return;
 
-    // Cancel any previous audio playback
+    // Stop recognition during speech playback to avoid audio feedback
+    safeStop();
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(lastAgentReply);
     utterance.lang = currentLanguage;
-    utterance.rate = 1.05; // natural conversational pacing
+    utterance.rate = 1.0;
     utterance.pitch = 1.0;
 
-    // Pick best regional voice if available
-    if (availableVoices.length > 0) {
+    // Select suitable regional voice if available
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
       const langPrefix = currentLanguage.split("-")[0];
-      const match = availableVoices.find(
+      const match = voices.find(
         (v) =>
           v.lang.toLowerCase() === currentLanguage.toLowerCase() ||
           v.lang.toLowerCase().startsWith(langPrefix)
       );
-      if (match) {
-        utterance.voice = match;
-      }
+      if (match) utterance.voice = match;
     }
 
     utterance.onstart = () => {
       setIsSpeakingTTS(true);
+      isSpeakingTTSRef.current = true;
     };
 
-    utterance.onend = () => {
+    const handleSpeechComplete = () => {
       setIsSpeakingTTS(false);
-      // Resume mic immediately after Nova finishes speaking
-      if (continuousMode && callActive) {
-        startListening();
+      isSpeakingTTSRef.current = false;
+      // Allow 300ms acoustic echo buffer before reopening mic
+      if (continuousModeRef.current && callActiveRef.current) {
+        setTimeout(() => {
+          if (!isSpeakingTTSRef.current && callActiveRef.current) {
+            safeStart();
+          }
+        }, 300);
       }
     };
 
+    utterance.onend = handleSpeechComplete;
     utterance.onerror = (e) => {
       if (e.error !== "canceled" && e.error !== "interrupted") {
-        console.warn("TTS notice:", e.error);
+        console.warn("TTS error:", e.error);
       }
-      setIsSpeakingTTS(false);
-      if (continuousMode && callActive) {
-        startListening();
-      }
+      handleSpeechComplete();
     };
 
     window.speechSynthesis.speak(utterance);
-  }, [lastAgentReply]);
+  }, [lastAgentReply, currentLanguage, safeStart, safeStop]);
 
-  // Barge-in Interruption handler: Instantly cancels Nova's speech and opens mic
+  // Barge-in Interruption: Stop TTS instantly and start listening
   const handleInterrupt = () => {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
     setIsSpeakingTTS(false);
-    startListening();
+    isSpeakingTTSRef.current = false;
+    setTimeout(() => {
+      safeStart();
+    }, 100);
   };
 
-  const startListening = () => {
-    if (!recognitionRef.current || isListening) return;
+  // Explicit Start Call Wrapper: Requests mic permission upfront
+  const handleStartCallWithPermission = async () => {
+    setMicError("");
     try {
-      recognitionRef.current.lang = currentLanguage;
-      recognitionRef.current.start();
-      setIsListening(true);
-    } catch (e) {
-      // Ignore if already active
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Close audio track once permission is confirmed
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    } catch (err) {
+      console.warn("Microphone permission check warning:", err);
+      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+        setMicError(
+          "Microphone permission was denied. Please allow microphone access in your browser settings."
+        );
+        return;
+      }
     }
+    onStartCall();
   };
 
-  const stopListening = () => {
-    if (!recognitionRef.current) return;
-    try {
-      recognitionRef.current.stop();
-      setIsListening(false);
-    } catch (e) {}
-  };
-
-  const handleMicButtonClick = () => {
-    // If agent is speaking, clicking the mic immediately interrupts the agent!
+  // Toggle mic button manually
+  const handleMicToggle = () => {
     if (isSpeakingTTS) {
       handleInterrupt();
       return;
     }
-
     if (isListening) {
-      stopListening();
+      safeStop();
     } else {
-      startListening();
+      safeStart();
     }
   };
 
@@ -230,25 +325,34 @@ export default function VoiceInterface({
     onSendTurn(msg, sentTime);
   };
 
-  // State machine status label
+  // Visual state descriptor
   const getVoiceState = () => {
-    if (isProcessing) return { label: "Nova is thinking...", class: "state-processing", icon: "⚙️" };
-    if (isSpeakingTTS) return { label: "Nova Speaking (Click to interrupt)", class: "state-speaking", icon: "🔊" };
-    if (isListening) return { label: "Listening... Speak naturally", class: "state-listening", icon: "🎙️" };
-    return { label: "Microphone Paused", class: "state-idle", icon: "⏸️" };
+    if (isProcessing)
+      return { label: "Nova is thinking...", class: "state-processing", icon: "⚙️" };
+    if (isSpeakingTTS)
+      return { label: "Nova Speaking (Tap to interrupt)", class: "state-speaking", icon: "🔊" };
+    if (isListening)
+      return { label: "Listening... Speak into microphone", class: "state-listening", icon: "🎙️" };
+    return { label: "Microphone Paused (Tap to Speak)", class: "state-idle", icon: "⏸️" };
   };
 
   const currentState = getVoiceState();
 
   return (
     <div className="voice-interface-card">
+      {micError && (
+        <div className="mic-alert-banner">
+          <span>⚠️ {micError}</span>
+        </div>
+      )}
+
       <div className="voice-header">
         <div className="call-actions">
           {!callActive ? (
             <button
               className="btn btn-primary btn-large"
-              onClick={onStartCall}
-              disabled={isProcessing}
+              onClick={handleStartCallWithPermission}
+              disabled={isProcessing || !browserSupported}
             >
               📞 Start Call with Nova
             </button>
@@ -274,13 +378,15 @@ export default function VoiceInterface({
           )}
         </div>
 
-        {/* Turnaround Latency & Audio State Indicators */}
         <div className="voice-meta-header">
           {lastTurnLatency && (
-            <div className="latency-badge" title="Time from human voice input to system reply">
-              ⚡ Response Time: <strong>{lastTurnLatency.totalMs}ms</strong>
+            <div className="latency-badge" title="Turnaround voice latency">
+              ⚡ Response: <strong>{lastTurnLatency.totalMs}ms</strong>
               {lastTurnLatency.backendMs && (
-                <span className="latency-sub"> (AI: {Math.round(lastTurnLatency.backendMs)}ms)</span>
+                <span className="latency-sub">
+                  {" "}
+                  (AI: {Math.round(lastTurnLatency.backendMs)}ms)
+                </span>
               )}
             </div>
           )}
@@ -302,7 +408,6 @@ export default function VoiceInterface({
 
       {callActive && (
         <div className="voice-controls">
-          {/* Audio State Machine Status Pill */}
           <div className={`voice-state-pill ${currentState.class}`}>
             <span className="state-icon">{currentState.icon}</span>
             <span className="state-text">{currentState.label}</span>
@@ -313,14 +418,14 @@ export default function VoiceInterface({
               className={`mic-button ${isListening ? "mic-active" : ""} ${
                 isSpeakingTTS ? "mic-speaking-bargein" : ""
               }`}
-              onClick={handleMicButtonClick}
+              onClick={handleMicToggle}
               disabled={isProcessing}
               title={
                 isSpeakingTTS
-                  ? "Click to interrupt Nova!"
+                  ? "Tap to interrupt Nova"
                   : isListening
-                  ? "Click to pause microphone"
-                  : "Click to speak"
+                  ? "Tap to pause microphone"
+                  : "Tap to activate microphone"
               }
             >
               <div className="mic-icon">
@@ -342,22 +447,27 @@ export default function VoiceInterface({
                   checked={continuousMode}
                   onChange={(e) => setContinuousMode(e.target.checked)}
                 />
-                Continuous Conversation (Auto-Barge-in Enabled)
+                Continuous Voice Mode
               </label>
             </div>
           </div>
 
-          {transcript && (
-            <div className="live-transcript">
-              <span className="transcript-label">Hearing:</span> "{transcript}"
+          {/* Real-time live transcript banner with clear visual feedback */}
+          {transcript ? (
+            <div className="live-transcript hearing-active">
+              <span className="transcript-label">Hearing you:</span> "{transcript}"
             </div>
-          )}
+          ) : isListening ? (
+            <div className="live-transcript listening-idle">
+              <span className="transcript-label">Microphone active:</span> Speak now...
+            </div>
+          ) : null}
 
-          {/* Text Input Fallback */}
+          {/* Fallback Text Input */}
           <form className="text-fallback-form" onSubmit={handleManualSubmit}>
             <input
               type="text"
-              placeholder="Or type here if mic is unavailable..."
+              placeholder="Or type here if you prefer typing..."
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
               disabled={isProcessing}
