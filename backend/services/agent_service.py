@@ -162,8 +162,6 @@ class AgentService:
         lead_fields  = llm_resp.lead_fields
 
         # 6. Update lead record with any newly extracted fields
-        lead = db.query(Lead).filter(Lead.id == call.id).first()
-        # Note: we find lead by call_id, not by its own id
         lead = db.query(Lead).filter(Lead.call_id == call_id).first()
         if not lead:
             lead = Lead(call_id=call_id)
@@ -172,6 +170,20 @@ class AgentService:
 
         if lead_fields:
             self._merge_lead_fields(lead, lead_fields)
+
+        # Track unanswered questions if user asked something but no KB chunks were found
+        is_question = any(kw in user_text.lower() for kw in ["?", "what", "how", "pricing", "cost", "price", "refund", "policy", "sla", "terms", "can you", "do you", "support"])
+        if is_question and not chunks:
+            try:
+                curr_insights = json.loads(call.insights) if call.insights else {}
+                unanswered = curr_insights.get("unanswered_questions", [])
+                if user_text not in unanswered:
+                    unanswered.append(user_text)
+                curr_insights["unanswered_questions"] = unanswered
+                call.insights = json.dumps(curr_insights)
+                db.add(call)
+            except Exception as e:
+                logger.error(f"Error recording unanswered question: {e}")
 
         # 7. Recompute lead score (deterministic, in lead_service)
         turn_count = len(history) + 1   # +1 for this turn
