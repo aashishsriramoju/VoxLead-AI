@@ -1,77 +1,69 @@
-// components/ChatWindow.jsx – Conversation message log with sentiment & citations
+// components/ChatWindow.jsx – Modern conversation transcript UI
 import React, { useEffect, useRef } from "react";
 
+function SentimentBadge({ sentiment }) {
+  if (!sentiment) return null;
+  const s = sentiment.toLowerCase();
+  const map = {
+    positive: { cls: "badge-positive", icon: "●" },
+    negative: { cls: "badge-negative", icon: "●" },
+    neutral:  { cls: "badge-neutral",  icon: "●" },
+  };
+  const { cls, icon } = map[s] || map.neutral;
+  return <span className={`sentiment-badge ${cls}`}>{icon} {s}</span>;
+}
+
 export default function ChatWindow({ messages, isProcessing }) {
-  const messagesEndRef = useRef(null);
+  const endRef = useRef(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
-
-  const renderSentimentBadge = (sentiment) => {
-    if (!sentiment) return null;
-    const s = sentiment.toLowerCase();
-    let badgeClass = "badge-neutral";
-    let icon = "⚪";
-    if (s === "positive") {
-      badgeClass = "badge-positive";
-      icon = "🟢";
-    } else if (s === "negative") {
-      badgeClass = "badge-negative";
-      icon = "🔴";
-    }
-
-    return (
-      <span className={`sentiment-badge ${badgeClass}`}>
-        {icon} {s}
-      </span>
-    );
-  };
 
   return (
     <div className="chat-window-card">
       <div className="chat-header">
-        <h3>💬 Live Conversation Transcript</h3>
+        <h3>💬 Conversation</h3>
         <span className="turns-count">{messages.length} turns</span>
       </div>
 
       <div className="messages-container">
         {messages.length === 0 ? (
           <div className="empty-chat-state">
-            <p>Click "Start Call with Nova" to begin the conversation.</p>
+            <p>Start a call to begin chatting with Nova</p>
           </div>
         ) : (
           messages.map((m, idx) => (
             <div
               key={idx}
-              className={`message-bubble ${
-                m.role === "assistant" ? "msg-assistant" : "msg-user"
-              }`}
+              className={`message-bubble ${m.role === "assistant" ? "msg-assistant" : "msg-user"}`}
             >
               <div className="message-meta">
                 <span className="sender-name">
-                  {m.role === "assistant" ? "🤖 Nova (Sales Rep)" : "👤 Customer"}
+                  {m.role === "assistant" ? "🤖 Nova" : "👤 You"}
                 </span>
                 <div className="meta-right">
                   {m.latency && (
-                    <span className="message-latency" title="Roundtrip voice turnaround time">
+                    <span className="message-latency" title="Round-trip voice latency">
                       ⚡ {m.latency}ms
                     </span>
                   )}
-                  {renderSentimentBadge(m.sentiment)}
+                  <SentimentBadge sentiment={m.sentiment} />
                 </div>
               </div>
 
               <div className="message-body">{m.text}</div>
 
-              {/* RAG Knowledge Base Sources Citation */}
               {m.role === "assistant" && m.sources && m.sources.length > 0 && (
                 <div className="rag-sources">
-                  <span className="sources-title">📚 Retrieved Sources:</span>
+                  <span className="sources-title">📚 Sources</span>
                   <ul>
-                    {m.sources.map((src, sIdx) => (
-                      <li key={sIdx}>
-                        Source: <strong>{src.file}</strong> &gt; {src.section} (Match: {Math.round(src.score * 100)}%)
+                    {m.sources.map((src, i) => (
+                      <li key={i}>
+                        {src.file} › {src.section} &nbsp;
+                        <strong style={{ color: "var(--cyan)" }}>
+                          {Math.round(src.score * 100)}%
+                        </strong>
                       </li>
                     ))}
                   </ul>
@@ -83,16 +75,17 @@ export default function ChatWindow({ messages, isProcessing }) {
 
         {isProcessing && (
           <div className="message-bubble msg-assistant message-typing">
-            <div className="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
+            <div className="message-meta">
+              <span className="sender-name">🤖 Nova</span>
             </div>
-            <span className="typing-text">Nova is thinking...</span>
+            <div className="typing-indicator">
+              <span /><span /><span />
+            </div>
+            <span className="typing-text">thinking...</span>
           </div>
         )}
 
-        <div ref={messagesEndRef} />
+        <div ref={endRef} />
       </div>
     </div>
   );
