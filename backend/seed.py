@@ -12,26 +12,26 @@ from config import SLOT_HOUR_START, SLOT_HOUR_END
 logger = logging.getLogger(__name__)
 
 
-def _next_working_days(n: int) -> list[datetime.date]:
-    """Return the next `n` calendar days that are Mon-Fri."""
+def _next_calendar_days(n: int) -> list[datetime.date]:
+    """Return the next `n` calendar days starting from tomorrow."""
     days = []
-    candidate = datetime.utcnow().date() + timedelta(days=1)  # start from tomorrow
-    while len(days) < n:
-        if candidate.weekday() < 5:  # 0=Mon, 4=Fri
-            days.append(candidate)
+    candidate = datetime.utcnow().date() + timedelta(days=1)
+    for _ in range(n):
+        days.append(candidate)
         candidate += timedelta(days=1)
     return days
 
 
 def seed_slots():
     """
-    Insert hourly slots for the next 5 working days (10:00–16:00 UTC).
+    Insert hourly slots for the next 14 days (10:00–16:00 UTC).
     Skips any slot that already exists in the DB.
     """
     db: Session = SessionLocal()
     try:
         created = 0
-        for day in _next_working_days(5):
+        # Seed tomorrow through next 14 days
+        for day in _next_calendar_days(14):
             for hour in range(SLOT_HOUR_START, SLOT_HOUR_END):   # 10, 11, ..., 16
                 slot_dt = datetime(day.year, day.month, day.day, hour, 0, 0)
                 exists = db.query(Slot).filter(Slot.slot_start == slot_dt).first()
@@ -45,3 +45,4 @@ def seed_slots():
         logger.error(f"Slot seeding failed: {e}")
     finally:
         db.close()
+

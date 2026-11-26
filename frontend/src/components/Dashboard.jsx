@@ -43,13 +43,33 @@ export default function Dashboard() {
     setTimeout(() => setKbStatus(""), 4000);
   };
 
-  const formatInsightsJSON = (rawInsights) => {
+  const formatInsightsText = (rawInsights) => {
     if (!rawInsights || rawInsights === "{}" || rawInsights.trim() === "") {
       return null;
     }
     try {
       const parsed = JSON.parse(rawInsights);
-      return JSON.stringify(parsed, null, 2);
+      if (typeof parsed === "object" && parsed !== null) {
+        const lines = [];
+        if (parsed.interests && (Array.isArray(parsed.interests) ? parsed.interests.length > 0 : parsed.interests)) {
+          lines.push(`🎯 Interests: ${Array.isArray(parsed.interests) ? parsed.interests.join(", ") : parsed.interests}`);
+        }
+        if (parsed.objections && (Array.isArray(parsed.objections) ? parsed.objections.length > 0 : parsed.objections)) {
+          lines.push(`⚠️ Objections: ${Array.isArray(parsed.objections) ? parsed.objections.join(", ") : parsed.objections}`);
+        } else {
+          lines.push("⚠️ Objections: None raised");
+        }
+        if (parsed.next_steps && (Array.isArray(parsed.next_steps) ? parsed.next_steps.length > 0 : parsed.next_steps)) {
+          lines.push(`➡️ Next Steps: ${Array.isArray(parsed.next_steps) ? parsed.next_steps.join(", ") : parsed.next_steps}`);
+        }
+        if (parsed.unanswered_questions && (Array.isArray(parsed.unanswered_questions) ? parsed.unanswered_questions.length > 0 : parsed.unanswered_questions)) {
+          lines.push(`❓ Unanswered: ${Array.isArray(parsed.unanswered_questions) ? parsed.unanswered_questions.join(", ") : parsed.unanswered_questions}`);
+        }
+        if (lines.length > 0) {
+          return lines.join("\n");
+        }
+      }
+      return rawInsights;
     } catch {
       return rawInsights;
     }
@@ -206,7 +226,7 @@ export default function Dashboard() {
                   <th>Language</th>
                   <th>Sentiment</th>
                   <th>Executive Summary</th>
-                  <th>AI Insights (JSON)</th>
+                  <th>Key Insights</th>
                 </tr>
               </thead>
               <tbody>
@@ -216,7 +236,7 @@ export default function Dashboard() {
                   </tr>
                 ) : (
                   calls.map((c) => {
-                    const jsonFormatted = formatInsightsJSON(c.insights);
+                    const textFormatted = formatInsightsText(c.insights);
 
                     return (
                       <tr key={c.id}>
@@ -244,10 +264,10 @@ export default function Dashboard() {
                           {c.summary || <span className="text-muted">In progress / pending summary</span>}
                         </td>
                         <td className="insights-cell">
-                          {jsonFormatted ? (
-                            <pre className="insights-json-block">
-                              {jsonFormatted}
-                            </pre>
+                          {textFormatted ? (
+                            <div className="insights-text-block">
+                              {textFormatted}
+                            </div>
                           ) : (
                             <span className="text-muted">—</span>
                           )}

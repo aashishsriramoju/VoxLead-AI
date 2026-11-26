@@ -39,9 +39,18 @@ CORE CONVERSATIONAL GUIDELINES:
 4. SPOKEN TIMES: Never say "UTC" or technical timezones. Speak dates naturally, e.g., "Thursday at 12 PM".
 5. KNOWLEDGE BOUNDARY: Answer product, pricing, and policy questions ONLY from the <context> block.
    If the answer is not in <context>, warmly say: "I'll have our specialist follow up with you on that!"
-6. QUALIFICATION: Ask ONE gentle question at a time: team size → monthly budget (in ₹) → timeline → requirements.
-7. BOOKING PREREQUISITES: Collect the customer's name and phone number before booking a demo.
-8. AUTO-EXIT: If the customer indicates they are done, want to leave, or say goodbye (e.g. "bye", "that's all", "thank you bye"),
+6. CONTACT & QUALIFICATION INTAKE:
+   - When the customer shares their name (or right after learning their name), immediately ask for their COMPANY NAME and MOBILE NUMBER next.
+   - Example: "Wonderful to meet you, [Name]! Which company are you with, and what's the best mobile number to reach you?"
+   - Once company name and mobile number are collected, continue qualification: team size → monthly budget (in ₹ INR) → timeline → specific requirements.
+   - Always extract and return name, company, and phone into lead_fields whenever provided.
+7. DEMO BOOKING & AVAILABILITY:
+   - If the customer asks about booking, scheduling, dates, or available slots (e.g., "in 2 days", "what slots do you have", "can I book for tomorrow", "are you free Friday", "schedule a demo"):
+     Set action to "check_slots" and requested_slot to the target date/time mentioned (e.g. "in 2 days").
+   - If the customer selects, confirms, or asks to book a specific time (e.g., "12 PM works", "the first one", "book at 2 PM in 2 days"):
+     Set action to "book_appointment" and requested_slot to the chosen time/slot.
+   - Collect customer name, company, and mobile number naturally without blocking slot checking.
+8. AUTO-EXIT: If the customer indicates they are done, want to leave, or say goodbye (e.g. "bye", "goodbye", "that's all", "thank you bye"),
    set action to "end_call" and give a cheerful, heartfelt farewell.
 9. LANGUAGE: Reply in the same language the customer uses (English, Hindi, or Telugu).
 
@@ -161,7 +170,11 @@ class AgentService:
             db.flush()
 
         if lead_fields:
-            self._merge_lead_fields(lead, lead_fields)
+            self._merge_lead_fields(lead, lead_fields, raw_user_text=user_text)
+        elif user_text:
+            phone_match = re.search(r'(?:\+?91[\s-]?)?([6-9]\d{9})\b', user_text)
+            if phone_match and not lead.phone:
+                lead.phone = phone_match.group(0).strip()
 
         # Track unanswered questions if relevant
         is_question = any(kw in user_lower for kw in ["?", "what", "how", "pricing", "cost", "price", "refund", "policy", "sla", "terms", "can you", "do you", "support"])
@@ -204,32 +217,59 @@ class AgentService:
             db.commit()
 
         elif action == "check_slots":
-            slots = booking_service.get_available_slots(db, limit=3)
+            query_slot = llm_resp.requested_slot or user_text
+            slots, matched_date = booking_service.get_available_slots(db, limit=3, query=query_slot)
             if slots:
-                formatted_times = [booking_service.format_slot_friendly(s.slot_start) for s in slots]
-                if len(formatted_times) > 1:
-                    slots_spoken = ", ".join(formatted_times[:-1]) + f", or {formatted_times[-1]}"
+                times_spoken = [s.slot_start.strftime("%I:%M %p").lstrip("0") for s in slots]
+                if len(times_spoken) > 1:
+                    times_str = ", ".join(times_spoken[:-1]) + f", or {times_spoken[-1]}"
                 else:
-                    slots_spoken = formatted_times[0]
-                reply_text = f"We have demo slots open {slots_spoken}! Which of those times works best for you?"
+                    times_str = times_spoken[0]
+
+                now_date = datetime.utcnow().date()
+                if matched_date:
+                    days_diff = (matched_date - now_date).days
+                    weekday_name = matched_date.strftime("%A")
+                    date_str = matched_date.strftime("%B %d").replace(" 0", " ")
+
+                    if days_diff == 2 or "in 2 days" in user_lower or "in two days" in user_lower:
+                        day_prefix = f"In two days on {weekday_name}, {date_str}"
+                    elif days_diff == 1 or "tomorrow" in user_lower:
+                        day_prefix = f"Tomorrow on {weekday_name}"
+                    elif days_diff == 0 or "today" in user_lower:
+                        day_prefix = "Today"
+                    else:
+                        day_prefix = f"On {weekday_name}, {date_str}"
+
+                    reply_text = f"{day_prefix}, we have demo slots open at {times_str}! Which of those times works best for you?"
+                else:
+                    day_name = slots[0].slot_start.strftime("%A")
+                    reply_text = f"We have demo slots open on {day_name} at {times_str}! Which time works best for you?"
             else:
                 reply_text = "I'm sorry, our upcoming slots are currently filled. Let me take down your details so our team can contact you directly!"
 
         elif action == "book_appointment":
             slot_query = llm_resp.requested_slot or user_text
-            appt = booking_service.book_slot(lead.id, slot_query, db, fallback_user_text=user_text)
+            appt = booking_service.book_slot(
+                lead.id,
+                slot_query,
+                db,
+                fallback_user_text=user_text,
+                history=history,
+            )
             if appt:
                 appointment_out = AppointmentOut.model_validate(appt)
-                friendly_time = booking_service.format_slot_friendly(appt.slot_start)
+                friendly_time = booking_service.format_slot_friendly(appt.slot_start, include_date=True)
                 reply_text = f"Wonderful! Your demo is confirmed for {friendly_time}. We're excited to show you NovaCRM!"
             else:
-                slots = booking_service.get_available_slots(db, limit=3)
+                slots, matched_date = booking_service.get_available_slots(db, limit=3, query=slot_query)
                 if slots:
-                    formatted_times = [booking_service.format_slot_friendly(s.slot_start) for s in slots]
-                    slots_spoken = ", ".join(formatted_times[:-1]) + f", or {formatted_times[-1]}"
-                    reply_text = f"I couldn't quite catch which slot you preferred! We have slots open {slots_spoken}. Which one would you like?"
+                    times_spoken = [s.slot_start.strftime("%I:%M %p").lstrip("0") for s in slots]
+                    times_str = ", ".join(times_spoken[:-1]) + f", or {times_spoken[-1]}"
+                    day_prefix = f"on {matched_date.strftime('%A, %B %d')}" if matched_date else "upcoming"
+                    reply_text = f"I'd love to book that for you! We have slots open {day_prefix} at {times_str}. Which time works best for you?"
                 else:
-                    reply_text = "I couldn't book that slot right now, but our team will reach out to schedule your demo directly!"
+                    reply_text = "I couldn't quite catch which slot you preferred! Let me know what time works best for you and I'll book it right away."
 
         # 8. Store messages in DB
         db.add(Message(call_id=call_id, role="user",      text=user_text,   sentiment=sentiment))
@@ -314,7 +354,7 @@ class AgentService:
             logger.debug(f"JSON parse failed: {exc}")
             return None
 
-    def _merge_lead_fields(self, lead: Lead, fields: LeadFields):
+    def _merge_lead_fields(self, lead: Lead, fields: LeadFields, raw_user_text: str = ""):
         if fields.name         is not None: lead.name          = fields.name
         if fields.phone        is not None: lead.phone         = fields.phone
         if fields.company      is not None: lead.company       = fields.company
@@ -322,6 +362,37 @@ class AgentService:
         if fields.team_size    is not None: lead.team_size     = fields.team_size
         if fields.requirements is not None: lead.requirements  = fields.requirements
         if fields.timeline_days is not None: lead.timeline_days = fields.timeline_days
+
+        # Regex fallback for mobile number if not extracted
+        if not lead.phone and raw_user_text:
+            phone_match = re.search(r'(?:\+?91[\s-]?)?([6-9]\d{9})\b', raw_user_text)
+            if phone_match:
+                lead.phone = phone_match.group(0).strip()
+
+    async def end_call(self, call_id: int, db: Session) -> Optional[EndCallResponse]:
+        """
+        Finalize the call session, generate executive summary and text insights, and update DB.
+        """
+        call = db.query(Call).filter(Call.id == call_id).first()
+        if not call:
+            return None
+
+        call.ended_at = datetime.utcnow()
+        db.commit()
+
+        from services.summary_service import summary_service
+        summary_res = await summary_service.summarise(call_id, db)
+        call.summary = summary_res.get("summary")
+        call.insights = summary_res.get("insights")
+        call.overall_sentiment = summary_res.get("overall_sentiment")
+        db.commit()
+        db.refresh(call)
+
+        return EndCallResponse(
+            summary=call.summary or "Call ended successfully.",
+            insights=call.insights or "",
+            overall_sentiment=call.overall_sentiment or "neutral",
+        )
 
 
 agent_service = AgentService()

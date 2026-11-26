@@ -6,6 +6,10 @@ from dotenv import load_dotenv
 
 load_dotenv()  # reads .env file from the project root
 
+# --- Paths & Database ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB_PATH = os.path.join(BASE_DIR, "voxlead.db")
+
 # --- Gemini ---
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
@@ -16,7 +20,7 @@ GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-3.5-flash-lite
 GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 
 # --- Database ---
-DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./voxlead.db")
+DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
 
 # --- RAG ---
 # Minimum cosine similarity to include a retrieved chunk in the prompt
@@ -27,3 +31,4 @@ RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "4"))
 # --- Slots ---
 SLOT_HOUR_START: int = 10   # 10:00 AM
 SLOT_HOUR_END:   int = 17   # up to 17:00 (last slot starts at 16:00)
+
