@@ -708,15 +708,31 @@ body {
 .pill-negative { background-color: rgba(248, 113, 113, 0.2); color: #fca5a5; }
 
 .summary-cell {
-  max-width: 320px;
+  max-width: 300px;
   font-size: 0.85rem;
   color: #e2e8f0;
+  line-height: 1.45;
 }
 
 .insights-cell {
-  max-width: 250px;
-  word-break: break-all;
-  font-size: 0.8rem;
+  max-width: 380px;
+  vertical-align: top;
+}
+
+.insights-json-block {
+  margin: 0;
+  background-color: #030712;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-family: Consolas, Monaco, "Lucida Console", monospace;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: #38bdf8;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Buttons */
